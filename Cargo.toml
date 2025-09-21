@@ -1,0 +1,12 @@
+[package]
+name = "habit_tracker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4"
+cliclack = "0.2"
+tokio = { version = "1", features = ["full"] }
+yup-oauth2 = "8.0"
+google-sheets4 = "5.0.5"
+dirs = "5.0"
