@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf};
 
 use chrono::{Duration, Utc};
 use google_sheets4::Sheets;
@@ -51,27 +51,44 @@ async fn main() {
         .build();
 
     let hub = Sheets::new(hyper::Client::builder().build(https), auth);
-    let range = format!("{}!A1:AF9", app_config.sheet_name);
+    //let range = format!("{}!A1:AF9", app_config.sheet_name);
 
-    let result = hub
+    let sheet = hub
         .spreadsheets()
-        .values_get(&app_config.spreadsheet_id, &range)
+        .values_get(&app_config.spreadsheet_id, &app_config.sheet_name)
         .doit()
         .await;
 
-    match result {
-        Ok((_resp, value_range)) => {
-            if let Some(values) = value_range.values {
-                for row in values {
-                    println!("{:?}", row);
-                }
-            } else {
-                println!("No data in range {}", range);
-            }
-        }
-        Err(e) => {
-            eprintln!("API error: {:?}", e);
-        }
+    let values = sheet.unwrap_or_default().1.values.unwrap_or_default();
+
+    let month_list = vec![
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+
+    let months: Vec<(usize, String)> = values
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            row.get(0)
+                .and_then(|cell| cell.as_str())
+                .filter(|s| month_list.contains(s))
+                .map(|s| (i + 1, s.to_string()))
+        })
+        .collect();
+
+    for month in months {
+        println!("{}, index {}", month.1, month.0);
     }
 }
 
