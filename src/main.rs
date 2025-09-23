@@ -1,6 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{cmp::Reverse, collections::HashMap, fs, path::PathBuf};
 
 use chrono::{Duration, Utc};
+use cliclack::{multiselect, select};
 use google_sheets4::Sheets;
 use serde::Deserialize;
 use yup_oauth2::{ServiceAccountAuthenticator, hyper, hyper_rustls, read_service_account_key};
@@ -76,20 +77,55 @@ async fn main() {
         "December",
     ];
 
-    let months: Vec<(usize, String)> = values
+    let months: HashMap<String, usize> = values
         .iter()
         .enumerate()
         .filter_map(|(i, row)| {
             row.get(0)
                 .and_then(|cell| cell.as_str())
                 .filter(|s| month_list.contains(s))
-                .map(|s| (i + 1, s.to_string()))
+                .map(|s| (s.to_string(), i + 1))
         })
         .collect();
 
-    for month in months {
-        println!("{}, index {}", month.1, month.0);
+    let mut month_selector = select("Select month");
+
+    let mut sorted_month_by_index: Vec<(&String, &usize)> = months.iter().collect();
+    sorted_month_by_index.sort_by_key(|(_, i)| *i);
+
+    for (month, _) in sorted_month_by_index {
+        month_selector = month_selector.item(month.clone(), month, "");
     }
+
+    let selected_month = month_selector.interact().unwrap();
+
+    println!(
+        "Selected month {} with index {}",
+        &selected_month,
+        &months.get(&selected_month).unwrap()
+    );
+
+    let mut habits: HashMap<String, usize> = HashMap::new();
+    let mut i = months.get(&selected_month).unwrap().clone();
+    while i < values.len() {
+        if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
+            if cell.is_empty() {
+                break;
+            }
+            habits.insert(cell.to_string(), i);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    let mut habit_selector = multiselect("Select habits");
+
+    for (habit, _) in &habits {
+        habit_selector = habit_selector.item(habit.clone(), &habit, "");
+    }
+
+    let selected_habits = habit_selector.interact().unwrap();
 }
 
 #[derive(Deserialize)]
