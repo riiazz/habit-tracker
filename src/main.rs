@@ -1,9 +1,10 @@
-use std::{cmp::Reverse, collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, usize};
 
 use chrono::{Duration, Utc};
 use cliclack::{multiselect, select};
 use google_sheets4::Sheets;
 use serde::Deserialize;
+use unicode_width::UnicodeWidthStr;
 use yup_oauth2::{ServiceAccountAuthenticator, hyper, hyper_rustls, read_service_account_key};
 
 #[tokio::main]
@@ -40,6 +41,7 @@ async fn main() {
         .unwrap();
 
     println!("Credential path: {}", creds_path.display());
+    println!();
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
@@ -154,6 +156,44 @@ async fn main() {
     }
 
     let selected_dates = date_selector.interact().unwrap();
+
+    let mut habit_score: HashMap<String, usize> = HashMap::new();
+    println!();
+    println!(
+        "========================================================================================"
+    );
+
+    let width: usize = 40;
+    for date in &selected_dates {
+        println!(
+            "{} {} {} activities:",
+            date, cur_month, &app_config.sheet_name
+        );
+
+        for habit in &selected_habits {
+            let date_index = dates.get(date).unwrap();
+            let habit_index = habits.get(habit).unwrap();
+            let is_done = values[*habit_index].get(*date_index).unwrap() == "TRUE";
+            let message = if is_done { "✅✅✅" } else { "❌❌❌" };
+
+            let pad = width.saturating_sub(habit.width());
+            println!("  {}{}{}", habit, " ".repeat(pad), message);
+
+            if is_done {
+                *habit_score.entry(habit.to_string()).or_insert(0) += 1;
+            }
+        }
+        println!();
+    }
+
+    println!();
+    println!("Total streak across selected dates:");
+
+    let width: usize = 30;
+    for (habit, score) in &habit_score {
+        let pad = width.saturating_sub(habit.width());
+        println!("  {}{}{} streaks", habit, " ".repeat(pad), score);
+    }
 }
 
 #[derive(Deserialize)]
