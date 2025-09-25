@@ -39,9 +39,6 @@ async fn main() {
         .await
         .unwrap();
 
-    //let auth = Arc::new(auth);
-
-    println!("Successfully load credentials!");
     println!("Credential path: {}", creds_path.display());
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
@@ -126,6 +123,37 @@ async fn main() {
     }
 
     let selected_habits = habit_selector.interact().unwrap();
+
+    let mut dates: HashMap<usize, usize> = HashMap::new();
+    let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
+    let month_index = index.clone() - 1;
+    let mut i = 1;
+    while i < values[month_index].len() {
+        if let Some(cell) = values[month_index].get(i).and_then(|c| c.as_str()) {
+            if cell.is_empty() || !cell.parse::<usize>().is_ok() {
+                break;
+            }
+            dates.insert(cell.parse::<usize>().unwrap(), i);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    //for (date, _) in &dates {
+    //    println!("{} date: {}", &cur_month, &date);
+    //}
+
+    let mut sorted_date: Vec<(&usize, &usize)> = dates.iter().collect();
+    sorted_date.sort_by_key(|(d, _)| *d);
+
+    let mut date_selector = multiselect("Select date(s)");
+
+    for (date, _) in sorted_date {
+        date_selector = date_selector.item(date.clone(), date, "");
+    }
+
+    let selected_dates = date_selector.interact().unwrap();
 }
 
 #[derive(Deserialize)]
