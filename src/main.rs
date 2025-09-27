@@ -2,8 +2,12 @@ use std::{collections::HashMap, fs, path::PathBuf, usize};
 
 use chrono::{Duration, Utc};
 use cliclack::{multiselect, select};
-use google_sheets4::Sheets;
+use google_sheets4::{
+    Sheets,
+    api::{BatchUpdateValuesRequest, ValueRange},
+};
 use serde::Deserialize;
+use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 use yup_oauth2::{ServiceAccountAuthenticator, hyper, hyper_rustls, read_service_account_key};
 
@@ -142,10 +146,6 @@ async fn main() {
         i += 1;
     }
 
-    //for (date, _) in &dates {
-    //    println!("{} date: {}", &cur_month, &date);
-    //}
-
     let mut sorted_date: Vec<(&usize, &usize)> = dates.iter().collect();
     sorted_date.sort_by_key(|(d, _)| *d);
 
@@ -194,6 +194,64 @@ async fn main() {
         let pad = width.saturating_sub(habit.width());
         println!("  {}{}{} streaks", habit, " ".repeat(pad), score);
     }
+
+    let mut updated_cell: Vec<ValueRange> = Vec::new();
+
+    for habit in &selected_habits {
+        let habit = habits.get(habit).unwrap();
+
+        for date in &selected_dates {
+            let date = dates.get(date).unwrap();
+
+            let cell_address = cell_address(*habit + 1, *date + 1);
+            set_data(
+                &mut updated_cell,
+                "TRUE".to_string(),
+                cell_address,
+                &app_config.sheet_name,
+            );
+        }
+    }
+
+    let batch = BatchUpdateValuesRequest {
+        value_input_option: Some("USER_ENTERED".to_string()),
+        data: Some(updated_cell),
+        ..Default::default()
+    };
+
+    let _result = hub
+        .spreadsheets()
+        .values_batch_update(batch, &app_config.spreadsheet_id)
+        .doit()
+        .await;
+}
+
+fn set_data(
+    value_range: &mut Vec<ValueRange>,
+    cell_value: String,
+    cell_index: String,
+    sheet_name: &String,
+) {
+    let value: Value = Value::String(cell_value.clone());
+    value_range.push(ValueRange {
+        range: Some(format!("{}!{}", sheet_name, cell_index)),
+        values: Some(vec![vec![value]]),
+        ..Default::default()
+    });
+}
+
+fn column_to_letter(mut col: usize) -> String {
+    let mut result = String::new();
+    while col > 0 {
+        let rem = (col - 1) % 26;
+        result.insert(0, (b'A' + rem as u8) as char);
+        col = (col - 1) / 26;
+    }
+    result
+}
+
+fn cell_address(row: usize, col: usize) -> String {
+    format!("{}{}", column_to_letter(col), row)
 }
 
 #[derive(Deserialize)]

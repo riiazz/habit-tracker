@@ -464,6 +464,7 @@ dependencies = [
  "dirs",
  "google-sheets4",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
  "unicode-width 0.1.14",
