@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::PathBuf, usize};
+use std::{collections::HashMap, path::PathBuf, usize};
 
 use chrono::{Duration, Utc};
 use cliclack::{multiselect, select};
@@ -18,34 +18,16 @@ async fn main() {
     let date_format = "%Y-%m-%d %H:%M";
 
     println!("{}", wib.format(date_format));
+    println!();
 
-    let config_path = dirs::config_dir()
-        .unwrap()
-        .join("habit_tracker/config.toml");
-
-    let content = fs::read_to_string(config_path).expect("Failed to read config file");
-    let app_config: AppConfig = toml::from_str(&content).expect("Failed to parse config.toml");
+    let app_config: AppConfig = load_app_config().await;
 
     println!(
         "Spreadsheet id: {}, sheet name: {}",
         app_config.spreadsheet_id, app_config.sheet_name
     );
 
-    let creds_path: PathBuf = dirs::config_dir()
-        .unwrap()
-        .join("habit_tracker/credentials.json");
-
-    let secret = read_service_account_key(&creds_path)
-        .await
-        .expect("Failed to read credentials.json");
-
-    let auth = ServiceAccountAuthenticator::builder(secret)
-        .build()
-        .await
-        .unwrap();
-
-    println!("Credential path: {}", creds_path.display());
-    println!();
+    let auth = setup_authenticator().await;
 
     let https = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
@@ -63,7 +45,7 @@ async fn main() {
         .doit()
         .await;
 
-    let values = sheet.unwrap_or_default().1.values.unwrap_or_default();
+    let mut values = sheet.unwrap_or_default().1.values.unwrap_or_default();
 
     let month_list = vec![
         "January",
@@ -157,6 +139,80 @@ async fn main() {
 
     let selected_dates = date_selector.interact().unwrap();
 
+    print_activities(
+        &selected_dates,
+        &selected_habits,
+        &habits,
+        &dates,
+        &values,
+        cur_month,
+        &app_config.sheet_name,
+    );
+
+    let mut updated_cell: Vec<ValueRange> = Vec::new();
+
+    for habit in &selected_habits {
+        let habit = habits.get(habit).unwrap();
+
+        for date in &selected_dates {
+            let date = dates.get(date).unwrap();
+
+            let cell_address = cell_address(*habit + 1, *date + 1);
+            set_data(
+                &mut updated_cell,
+                "TRUE".to_string(),
+                cell_address,
+                &app_config.sheet_name,
+            );
+
+            values[*habit][*date] = Value::String("TRUE".to_string());
+        }
+    }
+
+    let batch = BatchUpdateValuesRequest {
+        value_input_option: Some("USER_ENTERED".to_string()),
+        data: Some(updated_cell),
+        ..Default::default()
+    };
+
+    let result = hub
+        .spreadsheets()
+        .values_batch_update(batch, &app_config.spreadsheet_id)
+        .doit()
+        .await;
+
+    match result {
+        Ok((_, response)) => {
+            println!(
+                "{} cells updated",
+                response.total_updated_cells.unwrap_or(0)
+            );
+
+            print_activities(
+                &selected_dates,
+                &selected_habits,
+                &habits,
+                &dates,
+                &values,
+                cur_month,
+                &app_config.sheet_name,
+            );
+        }
+        Err(err) => {
+            eprint!("Update failed: {:?}", err);
+        }
+    }
+}
+
+fn print_activities(
+    selected_dates: &Vec<usize>,
+    selected_habits: &Vec<String>,
+    habits: &HashMap<String, usize>,
+    dates: &HashMap<usize, usize>,
+    values: &Vec<Vec<Value>>,
+    cur_month: &String,
+    sheet_name: &String,
+) {
     let mut habit_score: HashMap<String, usize> = HashMap::new();
     println!();
     println!(
@@ -164,13 +220,10 @@ async fn main() {
     );
 
     let width: usize = 40;
-    for date in &selected_dates {
-        println!(
-            "{} {} {} activities:",
-            date, cur_month, &app_config.sheet_name
-        );
+    for date in selected_dates {
+        println!("{} {} {} activities:", date, cur_month, sheet_name);
 
-        for habit in &selected_habits {
+        for habit in selected_habits {
             let date_index = dates.get(date).unwrap();
             let habit_index = habits.get(habit).unwrap();
             let is_done = values[*habit_index].get(*date_index).unwrap() == "TRUE";
@@ -194,36 +247,6 @@ async fn main() {
         let pad = width.saturating_sub(habit.width());
         println!("  {}{}{} streaks", habit, " ".repeat(pad), score);
     }
-
-    let mut updated_cell: Vec<ValueRange> = Vec::new();
-
-    for habit in &selected_habits {
-        let habit = habits.get(habit).unwrap();
-
-        for date in &selected_dates {
-            let date = dates.get(date).unwrap();
-
-            let cell_address = cell_address(*habit + 1, *date + 1);
-            set_data(
-                &mut updated_cell,
-                "TRUE".to_string(),
-                cell_address,
-                &app_config.sheet_name,
-            );
-        }
-    }
-
-    let batch = BatchUpdateValuesRequest {
-        value_input_option: Some("USER_ENTERED".to_string()),
-        data: Some(updated_cell),
-        ..Default::default()
-    };
-
-    let _result = hub
-        .spreadsheets()
-        .values_batch_update(batch, &app_config.spreadsheet_id)
-        .doit()
-        .await;
 }
 
 fn set_data(
@@ -252,6 +275,38 @@ fn column_to_letter(mut col: usize) -> String {
 
 fn cell_address(row: usize, col: usize) -> String {
     format!("{}{}", column_to_letter(col), row)
+}
+
+async fn load_app_config() -> AppConfig {
+    let config_path = dirs::config_dir()
+        .unwrap()
+        .join("habit_tracker/config.toml");
+
+    let content = tokio::fs::read_to_string(config_path)
+        .await
+        .expect("Failed to read config file");
+
+    toml::from_str(&content).expect("Failed to parse config.toml")
+}
+
+async fn setup_authenticator() -> yup_oauth2::authenticator::Authenticator<
+    yup_oauth2::hyper_rustls::HttpsConnector<yup_oauth2::hyper::client::HttpConnector>,
+> {
+    let creds_path: PathBuf = dirs::config_dir()
+        .unwrap()
+        .join("habit_tracker/credentials.json");
+
+    println!("Credential path: {}", creds_path.display());
+    println!();
+
+    let secret = read_service_account_key(&creds_path)
+        .await
+        .expect("Failed to read credentials.json");
+
+    ServiceAccountAuthenticator::builder(secret)
+        .build()
+        .await
+        .expect("Failed to build authenticator")
 }
 
 #[derive(Deserialize)]
