@@ -149,12 +149,47 @@ async fn main() {
         &app_config.sheet_name,
     );
 
+    let mut is_update_selector = select("Submit selected activities?");
+    is_update_selector = is_update_selector.item(true, "yes", "");
+    is_update_selector = is_update_selector.item(false, "no", "");
+
+    let is_update = is_update_selector.interact().unwrap();
+
+    if is_update {
+        update_activities(
+            &selected_dates,
+            &selected_habits,
+            &habits,
+            &dates,
+            &mut values,
+            cur_month,
+            &app_config,
+            &hub,
+        )
+        .await;
+    }
+
+    print!("See you tomorrow!");
+}
+
+async fn update_activities(
+    selected_dates: &Vec<usize>,
+    selected_habits: &Vec<String>,
+    habits: &HashMap<String, usize>,
+    dates: &HashMap<usize, usize>,
+    values: &mut Vec<Vec<Value>>,
+    cur_month: &String,
+    app_config: &AppConfig,
+    hub: &Sheets<
+        yup_oauth2::hyper_rustls::HttpsConnector<yup_oauth2::hyper::client::HttpConnector>,
+    >,
+) {
     let mut updated_cell: Vec<ValueRange> = Vec::new();
 
-    for habit in &selected_habits {
+    for habit in selected_habits {
         let habit = habits.get(habit).unwrap();
 
-        for date in &selected_dates {
+        for date in selected_dates {
             let date = dates.get(date).unwrap();
 
             let cell_address = cell_address(*habit + 1, *date + 1);
