@@ -1,11 +1,12 @@
 use std::{collections::HashMap, path::PathBuf, usize};
 
-use chrono::{Duration, Utc};
+use chrono::{Datelike, Duration, Utc};
 use cliclack::{multiselect, select};
 use google_sheets4::{
     Sheets,
     api::{BatchUpdateValuesRequest, ValueRange},
 };
+use rand::{seq::SliceRandom, thread_rng};
 use serde::Deserialize;
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
@@ -72,6 +73,53 @@ async fn main() {
                 .map(|s| (s.to_string(), i + 1))
         })
         .collect();
+
+    // Today's Progress
+    let messages = [
+        "✅ You’ve completed {}! +1 EXP 🎯",
+        "🔥 You nailed {}! +1 EXP",
+        "🏆 Achievement unlocked: {} +1 EXP",
+        "💪 Great job finishing {}! +1 EXP",
+        "🌱 Progress made: {} +1 EXP",
+    ];
+
+    let current_month = wib.format("%B").to_string();
+    let mut row_index = months.get(&current_month).unwrap().clone();
+    let current_date = wib.day() as usize;
+
+    let mut any_progress = false;
+    let mut rng = thread_rng();
+    let mut today_progress = String::from("Today's progress:\n");
+    while let Some(row) = values.get(row_index) {
+        if let Some(cell) = row.get(current_date) {
+            let habit_name = row
+                .get(0)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let cur_val = cell.as_str();
+
+            if cur_val == Some("TRUE") {
+                any_progress = true;
+                let template = messages.choose(&mut rng).unwrap();
+                let msg = template.replace("{}", &habit_name);
+                today_progress.push_str(&msg);
+                today_progress.push('\n');
+            }
+
+            row_index += 1;
+        } else {
+            break;
+        }
+    }
+
+    if any_progress {
+        println!("{}", today_progress);
+    } else {
+        println!("No quests completed today. The world is waiting, hero ⚔️");
+    }
+
+    println!();
 
     let mut month_selector = select("Select month");
 
