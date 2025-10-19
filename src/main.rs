@@ -1,3 +1,4 @@
+use core::panic;
 use std::{collections::HashMap, path::PathBuf, usize};
 
 use chrono::{Datelike, Duration, Utc};
@@ -84,7 +85,10 @@ async fn main() {
     ];
 
     let current_month = wib.format("%B").to_string();
-    let mut row_index = months.get(&current_month).unwrap().clone();
+    let mut row_index = months
+        .get(&current_month)
+        .unwrap_or_else(|| panic!("{current_month} not found in sheet"))
+        .clone();
     let current_date = wib.day() as usize;
 
     let mut any_progress = false;
@@ -159,6 +163,8 @@ async fn main() {
     }
 
     let selected_habits = habit_selector.interact().unwrap();
+    let mut selected_habits: HashMap<String, bool> =
+        selected_habits.into_iter().map(|h| (h, false)).collect();
 
     let mut dates: HashMap<usize, usize> = HashMap::new();
     let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
@@ -204,6 +210,34 @@ async fn main() {
     let is_update = is_update_selector.interact().unwrap();
 
     if is_update {
+        let mut is_update_all_selected_selector = select("Mark all selected as done/undone? 🎯");
+        is_update_all_selected_selector = is_update_all_selected_selector.item(true, "yes", "");
+        is_update_all_selected_selector = is_update_all_selected_selector.item(false, "no", "");
+
+        let is_submit_all = is_update_all_selected_selector.interact().unwrap();
+
+        if !is_submit_all {
+            let mut habit_selector = multiselect("Select habits");
+
+            for (habit, _) in &selected_habits {
+                habit_selector = habit_selector.item(habit.clone(), &habit, "");
+            }
+
+            let keep_habit = habit_selector.interact().unwrap();
+
+            for habit in &keep_habit {
+                if let Some(value) = selected_habits.get_mut(habit) {
+                    *value = true;
+                }
+            }
+        }
+
+        let mut update_value_selector = select("Mark this habit as complete or not:");
+        update_value_selector = update_value_selector.item(true, "Done ✅", "");
+        update_value_selector = update_value_selector.item(false, "Skipped 🚫", "");
+
+        let update_value = update_value_selector.interact().unwrap();
+
         update_activities(
             &selected_dates,
             &selected_habits,
@@ -213,6 +247,7 @@ async fn main() {
             cur_month,
             &app_config,
             &hub,
+            update_value,
         )
         .await;
     }
@@ -222,7 +257,7 @@ async fn main() {
 
 async fn update_activities(
     selected_dates: &Vec<usize>,
-    selected_habits: &Vec<String>,
+    selected_habits: &HashMap<String, bool>,
     habits: &HashMap<String, usize>,
     dates: &HashMap<usize, usize>,
     values: &mut Vec<Vec<Value>>,
@@ -231,10 +266,15 @@ async fn update_activities(
     hub: &Sheets<
         yup_oauth2::hyper_rustls::HttpsConnector<yup_oauth2::hyper::client::HttpConnector>,
     >,
+    update_value: bool,
 ) {
     let mut updated_cell: Vec<ValueRange> = Vec::new();
+    let update_value = if update_value { "TRUE" } else { "FALSE" };
 
-    for habit in selected_habits {
+    for (habit, is_update) in selected_habits {
+        if !is_update {
+            continue;
+        }
         let habit = habits.get(habit).unwrap();
 
         for date in selected_dates {
@@ -243,12 +283,12 @@ async fn update_activities(
             let cell_address = cell_address(*habit + 1, *date + 1);
             set_data(
                 &mut updated_cell,
-                "TRUE".to_string(),
+                update_value.to_string(),
                 cell_address,
                 &app_config.sheet_name,
             );
 
-            values[*habit][*date] = Value::String("TRUE".to_string());
+            values[*habit][*date] = Value::String(update_value.to_string());
         }
     }
 
@@ -289,7 +329,7 @@ async fn update_activities(
 
 fn print_activities(
     selected_dates: &Vec<usize>,
-    selected_habits: &Vec<String>,
+    selected_habits: &HashMap<String, bool>,
     habits: &HashMap<String, usize>,
     dates: &HashMap<usize, usize>,
     values: &Vec<Vec<Value>>,
@@ -306,7 +346,7 @@ fn print_activities(
     for date in selected_dates {
         println!("{} {} {} activities:", date, cur_month, sheet_name);
 
-        for habit in selected_habits {
+        for (habit, _) in selected_habits {
             let date_index = dates.get(date).unwrap();
             let habit_index = habits.get(habit).unwrap();
             let is_done = values[*habit_index].get(*date_index).unwrap() == "TRUE";
@@ -323,13 +363,20 @@ fn print_activities(
     }
 
     println!();
-    println!("Total streak across selected dates:");
+    println!("Selected date stats:");
 
     let width: usize = 30;
+    let mut total_exp = 0;
     for (habit, score) in &habit_score {
         let pad = width.saturating_sub(habit.width());
-        println!("  {}{}{} streaks", habit, " ".repeat(pad), score);
+        println!("  {}{} +{} EXP", habit, " ".repeat(pad), score);
+        total_exp += score;
     }
+
+    println!(
+        "\nQuest Summary: You’ve earned a total of {} EXP for the selected date(s)! ⚔️\n",
+        total_exp
+    );
 }
 
 fn set_data(
