@@ -1,7 +1,7 @@
 use core::panic;
 use std::{collections::HashMap, path::PathBuf, usize};
 
-use chrono::{Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use cliclack::{multiselect, select};
 use google_sheets4::{
     Sheets,
@@ -75,127 +75,14 @@ async fn main() {
             })
             .collect();
 
-        // Today's Progress
-        let messages = [
-            "✅ You’ve completed {}! +1 EXP 🎯",
-            "🔥 You nailed {}! +1 EXP",
-            "🏆 Achievement unlocked: {} +1 EXP",
-            "💪 Great job finishing {}! +1 EXP",
-            "🌱 Progress made: {} +1 EXP",
-        ];
+        println!();
 
-        let current_month = wib.format("%B").to_string();
-        let mut row_index = months
-            .get(&current_month)
-            .unwrap_or_else(|| panic!("{current_month} not found in sheet"))
-            .clone();
-        let current_date = wib.day() as usize;
-
-        let mut any_progress = false;
-        let mut rng = thread_rng();
-        let mut today_progress = String::from("Today's progress:\n");
-        while let Some(row) = values.get(row_index) {
-            if let Some(cell) = row.get(current_date) {
-                let habit_name = row
-                    .get(0)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                let cur_val = cell.as_str();
-
-                if cur_val == Some("TRUE") {
-                    any_progress = true;
-                    let template = messages.choose(&mut rng).unwrap();
-                    let msg = template.replace("{}", &habit_name);
-                    today_progress.push_str(&msg);
-                    today_progress.push('\n');
-                }
-
-                row_index += 1;
-            } else {
-                break;
-            }
-        }
-
-        if any_progress {
-            println!("{}", today_progress);
-        } else {
-            println!("No quests completed today. The world is waiting, hero ⚔️");
-        }
+        get_today_progresses(&values, &months, &wib);
 
         println!();
 
-        let mut month_selector = select("Select month");
-
-        let mut sorted_month_by_index: Vec<(&String, &usize)> = months.iter().collect();
-        sorted_month_by_index.sort_by_key(|(_, i)| *i);
-
-        for (month, _) in sorted_month_by_index {
-            month_selector = month_selector.item(month.clone(), month, "");
-        }
-
-        let selected_month = month_selector.interact().unwrap();
-
-        println!(
-            "Selected month {} with index {}",
-            &selected_month,
-            &months.get(&selected_month).unwrap()
-        );
-
-        let mut habits: HashMap<String, usize> = HashMap::new();
-        let mut i = months.get(&selected_month).unwrap().clone();
-        while i < values.len() {
-            if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
-                if cell.is_empty() {
-                    break;
-                }
-                habits.insert(cell.to_string(), i);
-            } else {
-                break;
-            }
-            i += 1;
-        }
-
-        let mut habit_selector = multiselect("Select habits");
-        let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
-        sorted_habit.sort();
-
-        for habit in &sorted_habit {
-            habit_selector = habit_selector.item(habit.clone(), &habit, "");
-        }
-
-        let selected_habits = habit_selector.interact().unwrap();
-        let mut selected_habits: HashMap<String, bool> =
-            selected_habits.into_iter().map(|h| (h, false)).collect();
-
-        let mut dates: HashMap<usize, usize> = HashMap::new();
-        let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
-        let month_index = index.clone() - 1;
-        let mut i = 1;
-        while i < values[month_index].len() {
-            if let Some(cell) = values[month_index].get(i).and_then(|c| c.as_str()) {
-                if cell.is_empty() || !cell.parse::<usize>().is_ok() {
-                    break;
-                }
-                dates.insert(cell.parse::<usize>().unwrap(), i);
-            } else {
-                break;
-            }
-            i += 1;
-        }
-
-        let mut sorted_date: Vec<(&usize, &usize)> = dates.iter().collect();
-        sorted_date.sort_by_key(|(d, _)| *d);
-
-        let mut date_selector = multiselect("Select date(s)");
-
-        for (date, _) in sorted_date {
-            date_selector = date_selector.item(date.clone(), date, "");
-        }
-
-        let selected_dates = date_selector.interact().unwrap();
-        let mut selected_dates: HashMap<usize, bool> =
-            selected_dates.into_iter().map(|h| (h, false)).collect();
+        let (mut selected_habits, mut selected_dates, cur_month, habits, dates) =
+            get_user_inputs(&values, &months);
 
         print_activities(
             &selected_dates,
@@ -203,7 +90,7 @@ async fn main() {
             &habits,
             &dates,
             &values,
-            cur_month,
+            &cur_month,
             &app_config.sheet_name,
         );
 
@@ -270,7 +157,7 @@ async fn main() {
                 &habits,
                 &dates,
                 &mut values,
-                cur_month,
+                &cur_month,
                 &app_config,
                 &hub,
                 update_value,
@@ -289,6 +176,163 @@ async fn main() {
     }
 
     print!("\nSee you tomorrow!\n");
+}
+
+fn get_user_inputs(
+    values: &Vec<Vec<Value>>,
+    months: &HashMap<String, usize>,
+) -> (
+    HashMap<String, bool>,
+    HashMap<usize, bool>,
+    String,
+    HashMap<String, usize>,
+    HashMap<usize, usize>,
+) {
+    let mut month_selector = select("Select month");
+
+    let mut sorted_month_by_index: Vec<(&String, &usize)> = months.iter().collect();
+    sorted_month_by_index.sort_by_key(|(_, i)| *i);
+
+    for (month, _) in sorted_month_by_index {
+        month_selector = month_selector.item(month.clone(), month, "");
+    }
+
+    let selected_month = month_selector.interact().unwrap();
+
+    println!(
+        "Selected month {} with index {}",
+        &selected_month,
+        &months.get(&selected_month).unwrap()
+    );
+
+    let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
+
+    let (habits, dates) = get_habits_and_dates(values, months, &selected_month, index.clone());
+
+    let mut habit_selector = multiselect("Select habits");
+    let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
+    sorted_habit.sort();
+
+    for habit in &sorted_habit {
+        habit_selector = habit_selector.item(habit.clone(), &habit, "");
+    }
+
+    let selected_habits = habit_selector.interact().unwrap();
+    let selected_habits: HashMap<String, bool> =
+        selected_habits.into_iter().map(|h| (h, false)).collect();
+
+    let mut sorted_date: Vec<(&usize, &usize)> = dates.iter().collect();
+    sorted_date.sort_by_key(|(d, _)| *d);
+
+    let mut date_selector = multiselect("Select date(s)");
+
+    for (date, _) in sorted_date {
+        date_selector = date_selector.item(date.clone(), date, "");
+    }
+
+    let selected_dates = date_selector.interact().unwrap();
+    let selected_dates: HashMap<usize, bool> =
+        selected_dates.into_iter().map(|h| (h, false)).collect();
+
+    (
+        selected_habits,
+        selected_dates,
+        cur_month.to_string(),
+        habits,
+        dates,
+    )
+}
+
+fn get_habits_and_dates(
+    values: &Vec<Vec<Value>>,
+    months: &HashMap<String, usize>,
+    selected_month: &String,
+    index: usize,
+) -> (HashMap<String, usize>, HashMap<usize, usize>) {
+    let mut habits: HashMap<String, usize> = HashMap::new();
+    let mut dates: HashMap<usize, usize> = HashMap::new();
+
+    let mut i = months.get(selected_month).unwrap().clone();
+    while i < values.len() {
+        if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
+            if cell.is_empty() {
+                break;
+            }
+            habits.insert(cell.to_string(), i);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    let month_index = index - 1;
+    let mut i = 1;
+    while i < values[month_index].len() {
+        if let Some(cell) = values[month_index].get(i).and_then(|c| c.as_str()) {
+            if cell.is_empty() || !cell.parse::<usize>().is_ok() {
+                break;
+            }
+            dates.insert(cell.parse::<usize>().unwrap(), i);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    (habits, dates)
+}
+
+fn get_today_progresses(
+    values: &Vec<Vec<Value>>,
+    months: &HashMap<String, usize>,
+    wib: &DateTime<Utc>,
+) {
+    let messages = [
+        "✅ You’ve completed {}! +1 EXP 🎯",
+        "🔥 You nailed {}! +1 EXP",
+        "🏆 Achievement unlocked: {} +1 EXP",
+        "💪 Great job finishing {}! +1 EXP",
+        "🌱 Progress made: {} +1 EXP",
+    ];
+
+    let current_month = wib.format("%B").to_string();
+    let mut row_index = months
+        .get(&current_month)
+        .unwrap_or_else(|| panic!("{current_month} not found in sheet"))
+        .clone();
+    let current_date = wib.day() as usize;
+
+    let mut any_progress = false;
+    let mut rng = thread_rng();
+    let mut today_progress = String::from("Today's progress:\n");
+    while let Some(row) = values.get(row_index) {
+        if let Some(cell) = row.get(current_date) {
+            let habit_name = row
+                .get(0)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let cur_val = cell.as_str();
+
+            if cur_val == Some("TRUE") {
+                any_progress = true;
+                let template = messages.choose(&mut rng).unwrap();
+                let msg = template.replace("{}", &habit_name);
+                today_progress.push_str(&msg);
+                today_progress.push('\n');
+            }
+
+            row_index += 1;
+        } else {
+            break;
+        }
+    }
+
+    if any_progress {
+        println!("{}", today_progress);
+    } else {
+        println!("No quests completed today. The world is waiting, hero ⚔️");
+    }
 }
 
 async fn update_activities(
