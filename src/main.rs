@@ -253,6 +253,9 @@ async fn main() {
                         *value = true;
                     }
                 }
+            } else {
+                selected_habits.iter_mut().for_each(|(_, v)| *v = true);
+                selected_dates.iter_mut().for_each(|(_, v)| *v = true);
             }
 
             let mut update_value_selector = select("Mark this habit as complete or not:");
