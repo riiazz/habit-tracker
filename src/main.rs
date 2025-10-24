@@ -81,6 +81,43 @@ async fn main() {
 
         println!();
 
+        let mut action_selector = select("How would you like to start?");
+        action_selector = action_selector.item(1, "✅ Record today's accomplishments", "");
+        action_selector = action_selector.item(2, "🔍 Browse & improve previous entries", "");
+
+        let selected_action = action_selector.interact().unwrap();
+
+        if selected_action == 1 {
+            let current_month = wib.format("%B").to_string();
+            let habits = get_habits(&values, &months, &current_month);
+            let mut selected_habits = get_user_input_habit(&habits);
+
+            let update_value = get_user_input_update_value();
+
+            selected_habits.iter_mut().for_each(|(_, v)| *v = true);
+
+            update_activities(
+                &HashMap::from([(wib.day() as usize, true)]),
+                &selected_habits,
+                &habits,
+                &HashMap::from([(wib.day() as usize, wib.day() as usize)]),
+                &mut values,
+                &current_month,
+                &app_config,
+                &hub,
+                update_value,
+            )
+            .await;
+
+            let is_exit = get_user_input_exit_session();
+
+            if is_exit {
+                break 'main_loop;
+            }
+
+            continue;
+        }
+
         let (mut selected_habits, mut selected_dates, cur_month, habits, dates) =
             get_user_inputs(&values, &months);
 
@@ -145,11 +182,7 @@ async fn main() {
                 selected_dates.iter_mut().for_each(|(_, v)| *v = true);
             }
 
-            let mut update_value_selector = select("Mark this habit as complete or not:");
-            update_value_selector = update_value_selector.item(true, "Done ✅", "");
-            update_value_selector = update_value_selector.item(false, "Skipped 🚫", "");
-
-            let update_value = update_value_selector.interact().unwrap();
+            let update_value = get_user_input_update_value();
 
             update_activities(
                 &selected_dates,
@@ -165,10 +198,7 @@ async fn main() {
             .await;
         }
 
-        let mut is_exit_selector = select("Wrap up your session? 📘");
-        is_exit_selector = is_exit_selector.item(true, "Yes ✅", "");
-        is_exit_selector = is_exit_selector.item(false, "No 🚫", "");
-        let is_exit = is_exit_selector.interact().unwrap();
+        let is_exit = get_user_input_exit_session();
 
         if is_exit {
             break 'main_loop;
@@ -176,6 +206,23 @@ async fn main() {
     }
 
     print!("\nSee you tomorrow!\n");
+}
+
+fn get_user_input_exit_session() -> bool {
+    let mut is_exit_selector = select("Wrap up your session? 📘");
+    is_exit_selector = is_exit_selector.item(true, "Yes ✅", "");
+    is_exit_selector = is_exit_selector.item(false, "No 🚫", "");
+    let is_exit = is_exit_selector.interact().unwrap();
+    is_exit
+}
+
+fn get_user_input_update_value() -> bool {
+    let mut update_value_selector = select("Mark this habit as complete or not:");
+    update_value_selector = update_value_selector.item(true, "Done ✅", "");
+    update_value_selector = update_value_selector.item(false, "Skipped 🚫", "");
+
+    let update_value = update_value_selector.interact().unwrap();
+    update_value
 }
 
 fn get_user_inputs(
@@ -207,20 +254,22 @@ fn get_user_inputs(
 
     let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
 
-    let (habits, dates) = get_habits_and_dates(values, months, &selected_month, index.clone());
+    let habits = get_habits(values, months, &selected_month);
+    let dates = get_dates(values, index.clone());
 
-    let mut habit_selector = multiselect("Select habits");
-    let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
-    sorted_habit.sort();
+    let selected_habits = get_user_input_habit(&habits);
+    let selected_dates = get_user_input_date(&dates);
 
-    for habit in &sorted_habit {
-        habit_selector = habit_selector.item(habit.clone(), &habit, "");
-    }
+    (
+        selected_habits,
+        selected_dates,
+        cur_month.to_string(),
+        habits,
+        dates,
+    )
+}
 
-    let selected_habits = habit_selector.interact().unwrap();
-    let selected_habits: HashMap<String, bool> =
-        selected_habits.into_iter().map(|h| (h, false)).collect();
-
+fn get_user_input_date(dates: &HashMap<usize, usize>) -> HashMap<usize, bool> {
     let mut sorted_date: Vec<(&usize, &usize)> = dates.iter().collect();
     sorted_date.sort_by_key(|(d, _)| *d);
 
@@ -234,23 +283,31 @@ fn get_user_inputs(
     let selected_dates: HashMap<usize, bool> =
         selected_dates.into_iter().map(|h| (h, false)).collect();
 
-    (
-        selected_habits,
-        selected_dates,
-        cur_month.to_string(),
-        habits,
-        dates,
-    )
+    selected_dates
 }
 
-fn get_habits_and_dates(
+fn get_user_input_habit(habits: &HashMap<String, usize>) -> HashMap<String, bool> {
+    let mut habit_selector = multiselect("Select habits");
+    let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
+    sorted_habit.sort();
+
+    for habit in &sorted_habit {
+        habit_selector = habit_selector.item(habit.clone(), &habit, "");
+    }
+
+    let selected_habits = habit_selector.interact().unwrap();
+    let selected_habits: HashMap<String, bool> =
+        selected_habits.into_iter().map(|h| (h, false)).collect();
+
+    selected_habits
+}
+
+fn get_habits(
     values: &Vec<Vec<Value>>,
     months: &HashMap<String, usize>,
     selected_month: &String,
-    index: usize,
-) -> (HashMap<String, usize>, HashMap<usize, usize>) {
+) -> HashMap<String, usize> {
     let mut habits: HashMap<String, usize> = HashMap::new();
-    let mut dates: HashMap<usize, usize> = HashMap::new();
 
     let mut i = months.get(selected_month).unwrap().clone();
     while i < values.len() {
@@ -264,6 +321,12 @@ fn get_habits_and_dates(
         }
         i += 1;
     }
+
+    habits
+}
+
+fn get_dates(values: &Vec<Vec<Value>>, index: usize) -> HashMap<usize, usize> {
+    let mut dates: HashMap<usize, usize> = HashMap::new();
 
     let month_index = index - 1;
     let mut i = 1;
@@ -279,7 +342,7 @@ fn get_habits_and_dates(
         i += 1;
     }
 
-    (habits, dates)
+    dates
 }
 
 fn get_today_progresses(
