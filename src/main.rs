@@ -1,17 +1,28 @@
+mod helpers;
 use core::panic;
 use std::{collections::HashMap, path::PathBuf, usize};
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use cliclack::{multiselect, select};
 use google_sheets4::{
-    Sheets,
-    api::{BatchUpdateValuesRequest, ValueRange},
+    FieldMask, Sheets,
+    api::{
+        BatchUpdateSpreadsheetRequest, BatchUpdateValuesRequest, BooleanCondition, CellData,
+        CellFormat, Color, DataValidationRule, DimensionRange, GridRange, InsertDimensionRequest,
+        RepeatCellRequest, Request, SetDataValidationRequest, TextFormat, ValueRange,
+    },
 };
 use rand::{seq::SliceRandom, thread_rng};
 use serde::Deserialize;
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
-use yup_oauth2::{ServiceAccountAuthenticator, hyper, hyper_rustls, read_service_account_key};
+use yup_oauth2::{
+    ServiceAccountAuthenticator,
+    hyper::{self},
+    hyper_rustls, read_service_account_key,
+};
+
+use crate::helpers::repeat_cell_request;
 
 #[tokio::main]
 async fn main() {
@@ -84,12 +95,14 @@ async fn main() {
         let mut action_selector = select("How would you like to start?");
         action_selector = action_selector.item(1, "✅ Record today's accomplishments", "");
         action_selector = action_selector.item(2, "🔍 Browse & improve previous entries", "");
+        action_selector = action_selector.item(3, "dev sandbox, insert new rows", "");
 
         let selected_action = action_selector.interact().unwrap();
 
         if selected_action == 1 {
             let current_month = wib.format("%B").to_string();
-            let habits = get_habits(&values, &months, &current_month);
+            let month_index = months.get(&current_month).unwrap();
+            let habits = get_habits(&values, month_index.clone());
             let mut selected_habits = get_user_input_habit(&habits);
 
             let update_value = get_user_input_update_value();
@@ -111,6 +124,242 @@ async fn main() {
 
             let is_exit = get_user_input_exit_session();
 
+            if is_exit {
+                break 'main_loop;
+            }
+
+            continue;
+        } else if selected_action == 3 {
+            let (_, spreadsheet) = hub
+                .spreadsheets()
+                .get(&app_config.spreadsheet_id)
+                .doit()
+                .await
+                .unwrap();
+
+            let sheet_id = spreadsheet
+                .sheets
+                .as_ref()
+                .and_then(|sheets| {
+                    sheets
+                        .iter()
+                        .filter_map(|sheet| sheet.properties.as_ref())
+                        .find(|props| props.title.as_deref() == Some(&app_config.sheet_name))
+                        .and_then(|props| props.sheet_id)
+                })
+                .unwrap_or_else(|| panic!("Sheet id for {} not found!", &app_config.sheet_name));
+
+            let config_sheet = hub
+                .spreadsheets()
+                .values_get(&app_config.spreadsheet_id, "Config!A1:C100")
+                .doit()
+                .await;
+
+            let config_sheet = config_sheet
+                .unwrap_or_else(|_| panic!("Config sheet not found!"))
+                .1
+                .values
+                .unwrap_or_default();
+
+            let habits = get_active_habits(&config_sheet, 0);
+            let n_row: i32 = (habits.iter().count() + 2) as i32;
+
+            {
+                let dimension_range = DimensionRange {
+                    sheet_id: Some(sheet_id),
+                    dimension: Some("ROWS".to_string()),
+                    start_index: Some(0),
+                    end_index: Some(n_row), // start_index + n
+                    ..DimensionRange::default()
+                };
+
+                let insert_rows = Request {
+                    insert_dimension: Some(InsertDimensionRequest {
+                        range: Some(dimension_range),
+                        inherit_from_before: Some(false),
+                    }),
+                    ..Request::default()
+                };
+
+                let clear_format = Request {
+                    repeat_cell: Some(RepeatCellRequest {
+                        range: Some(GridRange {
+                            sheet_id: Some(sheet_id),
+                            start_row_index: Some(1),
+                            end_row_index: Some(n_row),
+                            ..GridRange::default()
+                        }),
+                        cell: Some(CellData {
+                            user_entered_format: Some(CellFormat {
+                                text_format: Some(TextFormat {
+                                    foreground_color: Some(Color {
+                                        alpha: Some(1.0),
+                                        blue: Some(0.0),
+                                        green: Some(0.0),
+                                        red: Some(0.0),
+                                    }),
+                                    font_family: Some("Arial".to_string()),
+                                    ..TextFormat::default()
+                                }),
+                                ..CellFormat::default()
+                            }),
+                            ..CellData::default()
+                        }),
+                        fields: Some(FieldMask::new(&vec!["*".to_string()])),
+                    }),
+                    ..Request::default()
+                };
+
+                let month_column_color = repeat_cell_request(
+                    sheet_id,
+                    0,
+                    1,
+                    0,
+                    1,
+                    (1.0, 1.0, 1.0),
+                    (0.0, 0.0, 0.0),
+                    10,
+                    String::from("Arial"),
+                    String::from("LEFT"),
+                );
+
+                let date_column_color = repeat_cell_request(
+                    sheet_id,
+                    0,
+                    1,
+                    1,
+                    (wib.num_days_in_month() + 1) as i32,
+                    (1.0, 1.0, 1.0),
+                    (0.5, 1.5, 0.5),
+                    9,
+                    String::from("Arial"),
+                    String::from("CENTER"),
+                );
+
+                let bool_format = repeat_cell_request(
+                    sheet_id,
+                    1,
+                    n_row - 1,
+                    1,
+                    (wib.num_days_in_month() + 1) as i32,
+                    (0.0, 0.0, 0.0),
+                    (1.0, 1.0, 1.0),
+                    9,
+                    String::from("Arial"),
+                    String::from("CENTER"),
+                );
+
+                let set_cell_data_type = Request {
+                    set_data_validation: Some(SetDataValidationRequest {
+                        range: Some(GridRange {
+                            sheet_id: Some(sheet_id),
+                            start_row_index: Some(1),
+                            end_row_index: Some(n_row - 1),
+                            start_column_index: Some(1),
+                            end_column_index: Some((wib.num_days_in_month() + 1) as i32),
+                        }),
+                        rule: Some(DataValidationRule {
+                            condition: Some(BooleanCondition {
+                                type_: Some("BOOLEAN".to_string()),
+                                values: None,
+                            }),
+                            strict: Some(true),
+                            show_custom_ui: Some(true),
+                            input_message: None,
+                        }),
+                    }),
+                    ..Request::default()
+                };
+
+                let update_batch = BatchUpdateSpreadsheetRequest {
+                    requests: Some(vec![
+                        insert_rows,
+                        clear_format,
+                        set_cell_data_type,
+                        month_column_color,
+                        date_column_color,
+                        bool_format,
+                    ]),
+                    ..BatchUpdateSpreadsheetRequest::default()
+                };
+
+                let _ = hub
+                    .spreadsheets()
+                    .batch_update(update_batch, &app_config.spreadsheet_id)
+                    .doit()
+                    .await;
+            }
+
+            let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
+            sorted_habit.sort();
+
+            let mut updated_cell: Vec<ValueRange> = Vec::new();
+
+            let mut row_index: usize = 1;
+
+            {
+                let current_month = wib.format("%B").to_string();
+                let update_value = String::from(format!("{current_month}"));
+                let cell_address = cell_address(row_index, 1);
+                set_data(
+                    &mut updated_cell,
+                    update_value,
+                    cell_address,
+                    &app_config.sheet_name,
+                );
+
+                row_index += 1;
+            }
+
+            for habit in &sorted_habit {
+                let update_value = String::from(format!("{habit}"));
+                let cell_address = cell_address(row_index, 1);
+                set_data(
+                    &mut updated_cell,
+                    update_value,
+                    cell_address,
+                    &app_config.sheet_name,
+                );
+
+                row_index += 1;
+            }
+
+            for i in 1..wib.num_days_in_month() + 1 {
+                let update_value = String::from(format!("{}", i));
+                let cell_address = cell_address(1, (i + 1) as usize);
+                set_data(
+                    &mut updated_cell,
+                    update_value,
+                    cell_address,
+                    &app_config.sheet_name,
+                );
+            }
+
+            let batch = BatchUpdateValuesRequest {
+                value_input_option: Some("USER_ENTERED".to_string()),
+                data: Some(updated_cell),
+                ..Default::default()
+            };
+
+            let result = hub
+                .spreadsheets()
+                .values_batch_update(batch, &app_config.spreadsheet_id)
+                .doit()
+                .await;
+
+            match result {
+                Ok((_, response)) => {
+                    println!(
+                        "{} cells updated",
+                        response.total_updated_cells.unwrap_or(0)
+                    );
+                }
+                Err(err) => {
+                    eprint!("Update failed: {:?}", err);
+                }
+            }
+
+            let is_exit = get_user_input_exit_session();
             if is_exit {
                 break 'main_loop;
             }
@@ -254,7 +503,7 @@ fn get_user_inputs(
 
     let (cur_month, index) = months.get_key_value(&selected_month).unwrap();
 
-    let habits = get_habits(values, months, &selected_month);
+    let habits = get_habits(values, index.clone());
     let dates = get_dates(values, index.clone());
 
     let selected_habits = get_user_input_habit(&habits);
@@ -302,14 +551,41 @@ fn get_user_input_habit(habits: &HashMap<String, usize>) -> HashMap<String, bool
     selected_habits
 }
 
-fn get_habits(
-    values: &Vec<Vec<Value>>,
-    months: &HashMap<String, usize>,
-    selected_month: &String,
-) -> HashMap<String, usize> {
+fn get_active_habits(values: &Vec<Vec<Value>>, index: usize) -> HashMap<String, usize> {
     let mut habits: HashMap<String, usize> = HashMap::new();
 
-    let mut i = months.get(selected_month).unwrap().clone();
+    let mut i = index;
+    while i < values.len() {
+        if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
+            if cell.is_empty() {
+                break;
+            }
+
+            let is_complete = values[i].get(1).and_then(|c| c.as_str());
+            let is_active = values[i].get(2).and_then(|c| c.as_str());
+
+            let is_complete = is_complete.unwrap() == "TRUE";
+            let is_active = is_active.unwrap() == "TRUE";
+
+            if !is_active || is_complete {
+                i += 1;
+                continue;
+            }
+
+            habits.insert(cell.to_string(), i);
+        } else {
+            break;
+        }
+        i += 1;
+    }
+
+    habits
+}
+
+fn get_habits(values: &Vec<Vec<Value>>, index: usize) -> HashMap<String, usize> {
+    let mut habits: HashMap<String, usize> = HashMap::new();
+
+    let mut i = index;
     while i < values.len() {
         if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
             if cell.is_empty() {
