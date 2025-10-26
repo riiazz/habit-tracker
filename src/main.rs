@@ -1,17 +1,11 @@
+mod data_updater;
 mod helpers;
-use core::panic;
+mod template_builder;
 use std::{collections::HashMap, path::PathBuf, usize};
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use cliclack::{multiselect, select};
-use google_sheets4::{
-    FieldMask, Sheets,
-    api::{
-        BatchUpdateSpreadsheetRequest, BatchUpdateValuesRequest, BooleanCondition, CellData,
-        CellFormat, Color, DataValidationRule, DimensionRange, GridRange, InsertDimensionRequest,
-        RepeatCellRequest, Request, SetDataValidationRequest, TextFormat, ValueRange,
-    },
-};
+use google_sheets4::Sheets;
 use rand::{seq::SliceRandom, thread_rng};
 use serde::Deserialize;
 use serde_json::Value;
@@ -21,8 +15,12 @@ use yup_oauth2::{
     hyper::{self},
     hyper_rustls, read_service_account_key,
 };
+use yup_oauth2::{hyper::client::HttpConnector, hyper_rustls::HttpsConnector};
 
-use crate::helpers::repeat_cell_request;
+use crate::{
+    data_updater::{bulk_update, update_today_progress},
+    template_builder::generate_template_grid,
+};
 
 #[tokio::main]
 async fn main() {
@@ -75,7 +73,7 @@ async fn main() {
 
         let mut values = sheet.unwrap_or_default().1.values.unwrap_or_default();
 
-        let months: HashMap<String, usize> = values
+        let mut months: HashMap<String, usize> = values
             .iter()
             .enumerate()
             .filter_map(|(i, row)| {
@@ -88,7 +86,7 @@ async fn main() {
 
         println!();
 
-        get_today_progresses(&values, &months, &wib);
+        get_today_progresses(&values, &mut months, &wib, &hub, &app_config).await;
 
         println!();
 
@@ -100,27 +98,7 @@ async fn main() {
         let selected_action = action_selector.interact().unwrap();
 
         if selected_action == 1 {
-            let current_month = wib.format("%B").to_string();
-            let month_index = months.get(&current_month).unwrap();
-            let habits = get_habits(&values, month_index.clone());
-            let mut selected_habits = get_user_input_habit(&habits);
-
-            let update_value = get_user_input_update_value();
-
-            selected_habits.iter_mut().for_each(|(_, v)| *v = true);
-
-            update_activities(
-                &HashMap::from([(wib.day() as usize, true)]),
-                &selected_habits,
-                &habits,
-                &HashMap::from([(wib.day() as usize, wib.day() as usize)]),
-                &mut values,
-                &current_month,
-                &app_config,
-                &hub,
-                update_value,
-            )
-            .await;
+            update_today_progress(&hub, &app_config, &wib, &mut values, &months).await;
 
             let is_exit = get_user_input_exit_session();
 
@@ -130,235 +108,7 @@ async fn main() {
 
             continue;
         } else if selected_action == 3 {
-            let (_, spreadsheet) = hub
-                .spreadsheets()
-                .get(&app_config.spreadsheet_id)
-                .doit()
-                .await
-                .unwrap();
-
-            let sheet_id = spreadsheet
-                .sheets
-                .as_ref()
-                .and_then(|sheets| {
-                    sheets
-                        .iter()
-                        .filter_map(|sheet| sheet.properties.as_ref())
-                        .find(|props| props.title.as_deref() == Some(&app_config.sheet_name))
-                        .and_then(|props| props.sheet_id)
-                })
-                .unwrap_or_else(|| panic!("Sheet id for {} not found!", &app_config.sheet_name));
-
-            let config_sheet = hub
-                .spreadsheets()
-                .values_get(&app_config.spreadsheet_id, "Config!A1:C100")
-                .doit()
-                .await;
-
-            let config_sheet = config_sheet
-                .unwrap_or_else(|_| panic!("Config sheet not found!"))
-                .1
-                .values
-                .unwrap_or_default();
-
-            let habits = get_active_habits(&config_sheet, 0);
-            let n_row: i32 = (habits.iter().count() + 2) as i32;
-
-            {
-                let dimension_range = DimensionRange {
-                    sheet_id: Some(sheet_id),
-                    dimension: Some("ROWS".to_string()),
-                    start_index: Some(0),
-                    end_index: Some(n_row), // start_index + n
-                    ..DimensionRange::default()
-                };
-
-                let insert_rows = Request {
-                    insert_dimension: Some(InsertDimensionRequest {
-                        range: Some(dimension_range),
-                        inherit_from_before: Some(false),
-                    }),
-                    ..Request::default()
-                };
-
-                let clear_format = Request {
-                    repeat_cell: Some(RepeatCellRequest {
-                        range: Some(GridRange {
-                            sheet_id: Some(sheet_id),
-                            start_row_index: Some(1),
-                            end_row_index: Some(n_row),
-                            ..GridRange::default()
-                        }),
-                        cell: Some(CellData {
-                            user_entered_format: Some(CellFormat {
-                                text_format: Some(TextFormat {
-                                    foreground_color: Some(Color {
-                                        alpha: Some(1.0),
-                                        blue: Some(0.0),
-                                        green: Some(0.0),
-                                        red: Some(0.0),
-                                    }),
-                                    font_family: Some("Arial".to_string()),
-                                    ..TextFormat::default()
-                                }),
-                                ..CellFormat::default()
-                            }),
-                            ..CellData::default()
-                        }),
-                        fields: Some(FieldMask::new(&vec!["*".to_string()])),
-                    }),
-                    ..Request::default()
-                };
-
-                let month_column_color = repeat_cell_request(
-                    sheet_id,
-                    0,
-                    1,
-                    0,
-                    1,
-                    (1.0, 1.0, 1.0),
-                    (0.0, 0.0, 0.0),
-                    10,
-                    String::from("Arial"),
-                    String::from("LEFT"),
-                );
-
-                let date_column_color = repeat_cell_request(
-                    sheet_id,
-                    0,
-                    1,
-                    1,
-                    (wib.num_days_in_month() + 1) as i32,
-                    (1.0, 1.0, 1.0),
-                    (0.5, 1.5, 0.5),
-                    9,
-                    String::from("Arial"),
-                    String::from("CENTER"),
-                );
-
-                let bool_format = repeat_cell_request(
-                    sheet_id,
-                    1,
-                    n_row - 1,
-                    1,
-                    (wib.num_days_in_month() + 1) as i32,
-                    (0.0, 0.0, 0.0),
-                    (1.0, 1.0, 1.0),
-                    9,
-                    String::from("Arial"),
-                    String::from("CENTER"),
-                );
-
-                let set_cell_data_type = Request {
-                    set_data_validation: Some(SetDataValidationRequest {
-                        range: Some(GridRange {
-                            sheet_id: Some(sheet_id),
-                            start_row_index: Some(1),
-                            end_row_index: Some(n_row - 1),
-                            start_column_index: Some(1),
-                            end_column_index: Some((wib.num_days_in_month() + 1) as i32),
-                        }),
-                        rule: Some(DataValidationRule {
-                            condition: Some(BooleanCondition {
-                                type_: Some("BOOLEAN".to_string()),
-                                values: None,
-                            }),
-                            strict: Some(true),
-                            show_custom_ui: Some(true),
-                            input_message: None,
-                        }),
-                    }),
-                    ..Request::default()
-                };
-
-                let update_batch = BatchUpdateSpreadsheetRequest {
-                    requests: Some(vec![
-                        insert_rows,
-                        clear_format,
-                        set_cell_data_type,
-                        month_column_color,
-                        date_column_color,
-                        bool_format,
-                    ]),
-                    ..BatchUpdateSpreadsheetRequest::default()
-                };
-
-                let _ = hub
-                    .spreadsheets()
-                    .batch_update(update_batch, &app_config.spreadsheet_id)
-                    .doit()
-                    .await;
-            }
-
-            let mut sorted_habit: Vec<_> = habits.keys().cloned().collect();
-            sorted_habit.sort();
-
-            let mut updated_cell: Vec<ValueRange> = Vec::new();
-
-            let mut row_index: usize = 1;
-
-            {
-                let current_month = wib.format("%B").to_string();
-                let update_value = String::from(format!("{current_month}"));
-                let cell_address = cell_address(row_index, 1);
-                set_data(
-                    &mut updated_cell,
-                    update_value,
-                    cell_address,
-                    &app_config.sheet_name,
-                );
-
-                row_index += 1;
-            }
-
-            for habit in &sorted_habit {
-                let update_value = String::from(format!("{habit}"));
-                let cell_address = cell_address(row_index, 1);
-                set_data(
-                    &mut updated_cell,
-                    update_value,
-                    cell_address,
-                    &app_config.sheet_name,
-                );
-
-                row_index += 1;
-            }
-
-            for i in 1..wib.num_days_in_month() + 1 {
-                let update_value = String::from(format!("{}", i));
-                let cell_address = cell_address(1, (i + 1) as usize);
-                set_data(
-                    &mut updated_cell,
-                    update_value,
-                    cell_address,
-                    &app_config.sheet_name,
-                );
-            }
-
-            let batch = BatchUpdateValuesRequest {
-                value_input_option: Some("USER_ENTERED".to_string()),
-                data: Some(updated_cell),
-                ..Default::default()
-            };
-
-            let result = hub
-                .spreadsheets()
-                .values_batch_update(batch, &app_config.spreadsheet_id)
-                .doit()
-                .await;
-
-            match result {
-                Ok((_, response)) => {
-                    println!(
-                        "{} cells updated",
-                        response.total_updated_cells.unwrap_or(0)
-                    );
-                }
-                Err(err) => {
-                    eprint!("Update failed: {:?}", err);
-                }
-            }
-
+            generate_template_grid(&hub, &app_config, &wib).await;
             let is_exit = get_user_input_exit_session();
             if is_exit {
                 break 'main_loop;
@@ -387,62 +137,15 @@ async fn main() {
         let is_update = is_update_selector.interact().unwrap();
 
         if is_update {
-            let mut is_update_all_selected_selector =
-                select("Mark all selected as done/undone? 🎯");
-            is_update_all_selected_selector = is_update_all_selected_selector.item(true, "yes", "");
-            is_update_all_selected_selector = is_update_all_selected_selector.item(false, "no", "");
-
-            let is_submit_all = is_update_all_selected_selector.interact().unwrap();
-
-            if !is_submit_all {
-                let mut habit_selector = multiselect("Select habits");
-
-                let mut sorted_habit: Vec<_> = selected_habits.keys().cloned().collect();
-                sorted_habit.sort();
-                for habit in &sorted_habit {
-                    habit_selector = habit_selector.item(habit.clone(), &habit, "");
-                }
-
-                let keep_habit = habit_selector.interact().unwrap();
-
-                let mut date_selector = multiselect("Select dates");
-
-                let mut sorted_date: Vec<_> = selected_dates.keys().cloned().collect();
-                sorted_date.sort();
-                for date in &sorted_date {
-                    date_selector = date_selector.item(date.clone(), &date, "");
-                }
-
-                let keep_date = date_selector.interact().unwrap();
-
-                for habit in &keep_habit {
-                    if let Some(value) = selected_habits.get_mut(habit) {
-                        *value = true;
-                    }
-                }
-
-                for date in &keep_date {
-                    if let Some(value) = selected_dates.get_mut(date) {
-                        *value = true;
-                    }
-                }
-            } else {
-                selected_habits.iter_mut().for_each(|(_, v)| *v = true);
-                selected_dates.iter_mut().for_each(|(_, v)| *v = true);
-            }
-
-            let update_value = get_user_input_update_value();
-
-            update_activities(
-                &selected_dates,
-                &selected_habits,
+            bulk_update(
+                &hub,
+                &app_config,
+                &mut values,
+                &mut selected_dates,
+                &mut selected_habits,
                 &habits,
                 &dates,
-                &mut values,
                 &cur_month,
-                &app_config,
-                &hub,
-                update_value,
             )
             .await;
         }
@@ -621,10 +324,12 @@ fn get_dates(values: &Vec<Vec<Value>>, index: usize) -> HashMap<usize, usize> {
     dates
 }
 
-fn get_today_progresses(
+async fn get_today_progresses(
     values: &Vec<Vec<Value>>,
-    months: &HashMap<String, usize>,
+    months: &mut HashMap<String, usize>,
     wib: &DateTime<Utc>,
+    hub: &Sheets<HttpsConnector<HttpConnector>>,
+    app_config: &AppConfig,
 ) {
     let messages = [
         "✅ You’ve completed {}! +1 EXP 🎯",
@@ -635,10 +340,14 @@ fn get_today_progresses(
     ];
 
     let current_month = wib.format("%B").to_string();
-    let mut row_index = months
-        .get(&current_month)
-        .unwrap_or_else(|| panic!("{current_month} not found in sheet"))
-        .clone();
+    let mut row_index = if let Some(index) = months.get(&current_month) {
+        *index
+    } else {
+        generate_template_grid(hub, app_config, wib).await;
+        months.insert(current_month.clone(), 0);
+        0
+    };
+
     let current_date = wib.day() as usize;
 
     let mut any_progress = false;
@@ -671,81 +380,6 @@ fn get_today_progresses(
         println!("{}", today_progress);
     } else {
         println!("No quests completed today. The world is waiting, hero ⚔️");
-    }
-}
-
-async fn update_activities(
-    selected_dates: &HashMap<usize, bool>,
-    selected_habits: &HashMap<String, bool>,
-    habits: &HashMap<String, usize>,
-    dates: &HashMap<usize, usize>,
-    values: &mut Vec<Vec<Value>>,
-    cur_month: &String,
-    app_config: &AppConfig,
-    hub: &Sheets<
-        yup_oauth2::hyper_rustls::HttpsConnector<yup_oauth2::hyper::client::HttpConnector>,
-    >,
-    update_value: bool,
-) {
-    let mut updated_cell: Vec<ValueRange> = Vec::new();
-    let update_value = if update_value { "TRUE" } else { "FALSE" };
-
-    for (habit, is_update) in selected_habits {
-        if !is_update {
-            continue;
-        }
-        let habit = habits.get(habit).unwrap();
-
-        for (date, is_update) in selected_dates {
-            if !is_update {
-                continue;
-            }
-            let date = dates.get(date).unwrap();
-
-            let cell_address = cell_address(*habit + 1, *date + 1);
-            set_data(
-                &mut updated_cell,
-                update_value.to_string(),
-                cell_address,
-                &app_config.sheet_name,
-            );
-
-            values[*habit][*date] = Value::String(update_value.to_string());
-        }
-    }
-
-    let batch = BatchUpdateValuesRequest {
-        value_input_option: Some("USER_ENTERED".to_string()),
-        data: Some(updated_cell),
-        ..Default::default()
-    };
-
-    let result = hub
-        .spreadsheets()
-        .values_batch_update(batch, &app_config.spreadsheet_id)
-        .doit()
-        .await;
-
-    match result {
-        Ok((_, response)) => {
-            println!(
-                "{} cells updated",
-                response.total_updated_cells.unwrap_or(0)
-            );
-
-            print_activities(
-                &selected_dates,
-                &selected_habits,
-                &habits,
-                &dates,
-                &values,
-                cur_month,
-                &app_config.sheet_name,
-            );
-        }
-        Err(err) => {
-            eprint!("Update failed: {:?}", err);
-        }
     }
 }
 
@@ -803,34 +437,6 @@ fn print_activities(
         "\nQuest Summary: You’ve earned a total of {} EXP for the selected date(s)! ⚔️\n",
         total_exp
     );
-}
-
-fn set_data(
-    value_range: &mut Vec<ValueRange>,
-    cell_value: String,
-    cell_index: String,
-    sheet_name: &String,
-) {
-    let value: Value = Value::String(cell_value.clone());
-    value_range.push(ValueRange {
-        range: Some(format!("{}!{}", sheet_name, cell_index)),
-        values: Some(vec![vec![value]]),
-        ..Default::default()
-    });
-}
-
-fn column_to_letter(mut col: usize) -> String {
-    let mut result = String::new();
-    while col > 0 {
-        let rem = (col - 1) % 26;
-        result.insert(0, (b'A' + rem as u8) as char);
-        col = (col - 1) / 26;
-    }
-    result
-}
-
-fn cell_address(row: usize, col: usize) -> String {
-    format!("{}{}", column_to_letter(col), row)
 }
 
 async fn load_app_config() -> AppConfig {
