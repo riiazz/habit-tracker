@@ -10,7 +10,10 @@ use serde_json::Value;
 use yup_oauth2::{hyper::client::HttpConnector, hyper_rustls::HttpsConnector};
 
 use crate::{
-    AppConfig, get_habits, get_user_input_habit, get_user_input_update_value, print_activities,
+    AppConfig,
+    interaction::{get_user_input_habit, get_user_input_update_value},
+    print_activities,
+    sheet_parser::get_habits,
 };
 
 pub async fn update_today_progress(

@@ -8,10 +8,10 @@ use yup_oauth2::{hyper::client::HttpConnector, hyper_rustls::HttpsConnector};
 use crate::{
     AppConfig,
     data_updater::{cell_address, set_data},
-    get_active_habits,
     helpers::{
         clear_format_request, insert_rows_request, repeat_cell_request, set_data_validation_request,
     },
+    sheet_parser::get_active_habits,
 };
 
 pub async fn generate_template_grid(
