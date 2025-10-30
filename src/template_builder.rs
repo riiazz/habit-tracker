@@ -9,7 +9,8 @@ use crate::{
     AppConfig,
     data_updater::{cell_address, set_data},
     helpers::{
-        clear_format_request, insert_rows_request, repeat_cell_request, set_data_validation_request,
+        add_sheet_request, auto_resize_dimension_request, clear_format_request,
+        insert_rows_request, repeat_cell_request, set_data_validation_request,
     },
     sheet_parser::get_active_habits,
 };
@@ -18,7 +19,7 @@ pub async fn generate_template_grid(
     hub: &Sheets<HttpsConnector<HttpConnector>>,
     app_config: &AppConfig,
     wib: &DateTime<Utc>,
-) {
+) -> i32 {
     let (_, spreadsheet) = hub
         .spreadsheets()
         .get(&app_config.spreadsheet_id)
@@ -192,4 +193,40 @@ pub async fn generate_template_grid(
             eprint!("Update failed: {:?}", err);
         }
     }
+
+    sheet_id
+}
+
+pub async fn generate_sheet(hub: &Sheets<HttpsConnector<HttpConnector>>, app_config: &AppConfig) {
+    let create_new_sheet = add_sheet_request(app_config.sheet_name.as_str(), Some(0), 500, 32);
+
+    let update_batch = BatchUpdateSpreadsheetRequest {
+        requests: Some(vec![create_new_sheet]),
+        ..BatchUpdateSpreadsheetRequest::default()
+    };
+
+    let _ = hub
+        .spreadsheets()
+        .batch_update(update_batch, &app_config.spreadsheet_id)
+        .doit()
+        .await;
+}
+
+pub async fn auto_resize_dimension(
+    hub: &Sheets<HttpsConnector<HttpConnector>>,
+    app_config: &AppConfig,
+    sheet_id: i32,
+) {
+    let resize = auto_resize_dimension_request(sheet_id, "COLUMNS".to_string(), 0, 32);
+
+    let update_batch = BatchUpdateSpreadsheetRequest {
+        requests: Some(vec![resize]),
+        ..BatchUpdateSpreadsheetRequest::default()
+    };
+
+    let _ = hub
+        .spreadsheets()
+        .batch_update(update_batch, &app_config.spreadsheet_id)
+        .doit()
+        .await;
 }

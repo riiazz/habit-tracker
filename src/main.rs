@@ -4,22 +4,21 @@ mod init;
 mod interaction;
 mod sheet_parser;
 mod template_builder;
-use std::{collections::HashMap, usize};
-
-use chrono::{Duration, Utc};
-use cliclack::select;
-use google_sheets4::Sheets;
-use yup_oauth2::{
-    hyper::{self},
-    hyper_rustls,
-};
 
 use crate::{
     data_updater::{bulk_update, update_today_progress},
-    init::{AppConfig, load_app_config, setup_authenticator},
+    init::{AppConfig, ensure_sheet_ready, load_app_config, setup_authenticator},
     interaction::{get_user_input_exit_session, get_user_inputs},
     sheet_parser::{get_today_progresses, print_activities},
     template_builder::generate_template_grid,
+};
+use chrono::{Duration, Utc};
+use cliclack::select;
+use google_sheets4::Sheets;
+use std::{collections::HashMap, usize};
+use yup_oauth2::{
+    hyper::{self},
+    hyper_rustls,
 };
 
 #[tokio::main]
@@ -31,7 +30,7 @@ async fn main() {
     println!("{}", wib.format(date_format));
     println!();
 
-    let app_config: AppConfig = load_app_config().await;
+    let app_config: AppConfig = load_app_config(wib).await;
 
     println!(
         "Spreadsheet id: {}, sheet name: {}",
@@ -65,13 +64,7 @@ async fn main() {
     ];
 
     'main_loop: loop {
-        let sheet = hub
-            .spreadsheets()
-            .values_get(&app_config.spreadsheet_id, &app_config.sheet_name)
-            .doit()
-            .await;
-
-        let mut values = sheet.unwrap_or_default().1.values.unwrap_or_default();
+        let mut values = ensure_sheet_ready(&hub, &app_config, &wib).await;
 
         let mut months: HashMap<String, usize> = values
             .iter()
