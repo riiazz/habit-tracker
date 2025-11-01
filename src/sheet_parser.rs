@@ -7,7 +7,7 @@ use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 use yup_oauth2::{hyper::client::HttpConnector, hyper_rustls::HttpsConnector};
 
-use crate::{AppConfig, template_builder::generate_template_grid};
+use crate::{AppConfig, init::valid_months, template_builder::generate_template_grid};
 
 pub fn get_active_habits(values: &Vec<Vec<Value>>, index: usize) -> HashMap<String, usize> {
     let mut habits: HashMap<String, usize> = HashMap::new();
@@ -80,7 +80,7 @@ pub fn get_dates(values: &Vec<Vec<Value>>, index: usize) -> HashMap<usize, usize
 }
 
 pub async fn get_today_progresses(
-    values: &Vec<Vec<Value>>,
+    values: &mut Vec<Vec<Value>>,
     months: &mut HashMap<String, usize>,
     wib: &DateTime<Utc>,
     hub: &Sheets<HttpsConnector<HttpConnector>>,
@@ -98,9 +98,17 @@ pub async fn get_today_progresses(
     let mut row_index = if let Some(index) = months.get(&current_month) {
         *index
     } else {
-        generate_template_grid(hub, app_config, wib).await;
-        months.insert(current_month.clone(), 0);
-        0
+        println!(
+            "⚡ '{}' missing from database. Initiating reconstruction protocol... 🚧",
+            current_month
+        );
+
+        let (new_value, _) = generate_template_grid(hub, app_config, wib).await;
+        *values = new_value;
+        *months = valid_months(values);
+        *months
+            .get(&current_month)
+            .expect("Failed generating new month grid")
     };
 
     let current_date = wib.day() as usize;

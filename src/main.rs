@@ -7,7 +7,7 @@ mod template_builder;
 
 use crate::{
     data_updater::{bulk_update, update_today_progress},
-    init::{AppConfig, ensure_sheet_ready, load_app_config, setup_authenticator},
+    init::{AppConfig, ensure_sheet_ready, load_app_config, setup_authenticator, valid_months},
     interaction::{get_user_input_exit_session, get_user_inputs},
     sheet_parser::{get_today_progresses, print_activities},
     template_builder::generate_template_grid,
@@ -48,38 +48,13 @@ async fn main() {
 
     let hub = Sheets::new(hyper::Client::builder().build(https), auth);
 
-    let month_list = vec![
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
-
     'main_loop: loop {
         let mut values = ensure_sheet_ready(&hub, &app_config, &wib).await;
 
-        let mut months: HashMap<String, usize> = values
-            .iter()
-            .enumerate()
-            .filter_map(|(i, row)| {
-                row.get(0)
-                    .and_then(|cell| cell.as_str())
-                    .filter(|s| month_list.contains(s))
-                    .map(|s| (s.to_string(), i + 1))
-            })
-            .collect();
-
+        let mut months: HashMap<String, usize> = valid_months(&values);
         println!();
 
-        get_today_progresses(&values, &mut months, &wib, &hub, &app_config).await;
+        get_today_progresses(&mut values, &mut months, &wib, &hub, &app_config).await;
 
         println!();
 

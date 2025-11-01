@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Datelike, Utc};
 use google_sheets4::Sheets;
 use serde::Deserialize;
 use serde_json::Value;
+use time::Month;
 use yup_oauth2::{
     ServiceAccountAuthenticator, hyper::client::HttpConnector, hyper_rustls::HttpsConnector,
     read_service_account_key,
@@ -72,7 +73,7 @@ pub async fn ensure_sheet_ready(
             );
 
             generate_sheet(&hub, &app_config).await;
-            let sheet_id = generate_template_grid(&hub, &app_config, &wib).await;
+            let (_, sheet_id) = generate_template_grid(&hub, &app_config, &wib).await;
             auto_resize_dimension(&hub, &app_config, sheet_id).await;
 
             sheet = hub
@@ -97,4 +98,17 @@ pub async fn ensure_sheet_ready(
     };
 
     values.values.unwrap_or_default()
+}
+
+pub fn valid_months(values: &Vec<Vec<Value>>) -> HashMap<String, usize> {
+    values
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            row.get(0)
+                .and_then(|cell| cell.as_str())
+                .and_then(|s| Month::from_str(s).ok())
+                .map(|m| (m.to_string(), i + 1))
+        })
+        .collect()
 }

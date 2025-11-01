@@ -3,6 +3,7 @@ use google_sheets4::{
     Sheets,
     api::{BatchUpdateSpreadsheetRequest, BatchUpdateValuesRequest, ValueRange},
 };
+use serde_json::Value;
 use yup_oauth2::{hyper::client::HttpConnector, hyper_rustls::HttpsConnector};
 
 use crate::{
@@ -19,7 +20,7 @@ pub async fn generate_template_grid(
     hub: &Sheets<HttpsConnector<HttpConnector>>,
     app_config: &AppConfig,
     wib: &DateTime<Utc>,
-) -> i32 {
+) -> (Vec<Vec<Value>>, i32) {
     let (_, spreadsheet) = hub
         .spreadsheets()
         .get(&app_config.spreadsheet_id)
@@ -132,8 +133,8 @@ pub async fn generate_template_grid(
 
     let mut row_index: usize = 1;
 
+    let current_month = wib.format("%B").to_string();
     {
-        let current_month = wib.format("%B").to_string();
         let update_value = String::from(format!("{current_month}"));
         let cell_address = cell_address(row_index, 1);
         set_data(
@@ -194,7 +195,31 @@ pub async fn generate_template_grid(
         }
     }
 
-    sheet_id
+    let sheet = hub
+        .spreadsheets()
+        .values_get(&app_config.spreadsheet_id, &app_config.sheet_name)
+        .doit()
+        .await;
+
+    let value_range = match sheet {
+        Ok((_, value_range)) => {
+            println!(
+                "✅ '{}' grid created successfully! You’re all set to continue. 🎉",
+                current_month
+            );
+            value_range
+                .values
+                .expect("Sheet value not found, make sure you have internet connection")
+        }
+        Err(_) => {
+            panic!(
+                "Generating new {} grid failed, make sure you have internet connection",
+                current_month
+            )
+        }
+    };
+
+    (value_range, sheet_id)
 }
 
 pub async fn generate_sheet(hub: &Sheets<HttpsConnector<HttpConnector>>, app_config: &AppConfig) {
