@@ -143,7 +143,7 @@ pub async fn update_activities(
             }
             let date = dates.get(date).unwrap();
 
-            let cell_address = cell_address(*habit + 1, *date + 1);
+            let cell_address = get_cell_address(*habit + 1, *date + 1);
             set_data(
                 &mut updated_cell,
                 update_value.to_string(),
@@ -214,6 +214,6 @@ fn column_to_letter(mut col: usize) -> String {
     result
 }
 
-pub fn cell_address(row: usize, col: usize) -> String {
+pub fn get_cell_address(row: usize, col: usize) -> String {
     format!("{}{}", column_to_letter(col), row)
 }

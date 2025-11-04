@@ -1,3 +1,4 @@
+use core::panic;
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Datelike, Utc};
@@ -10,7 +11,9 @@ use yup_oauth2::{
     read_service_account_key,
 };
 
-use crate::template_builder::{auto_resize_dimension, generate_sheet, generate_template_grid};
+use crate::template_builder::{
+    auto_resize_dimension, generate_config_sheet, generate_sheet, generate_template_grid,
+};
 
 pub async fn load_app_config(date_time: DateTime<Utc>) -> AppConfig {
     let config_path = dirs::config_dir()
@@ -64,6 +67,28 @@ pub async fn ensure_sheet_ready(
         .doit()
         .await;
 
+    {
+        let _ = match hub
+            .spreadsheets()
+            .values_get(&app_config.spreadsheet_id, "Config!A1:A3")
+            .doit()
+            .await
+        {
+            Ok(sheet) => sheet,
+            Err(_) => {
+                println!(
+                    "⚡ Sheet 'Config' missing from database. Initiating reconstruction protocol... 🚧"
+                );
+                match generate_config_sheet(hub, app_config).await {
+                    Ok(config_sheet) => config_sheet,
+                    Err(_) => panic!(
+                        "Creating config sheet failed, make sure you have internet connection"
+                    ),
+                }
+            }
+        };
+    }
+
     let values = match sheet {
         Ok((_, value_range)) => value_range,
         Err(_) => {
@@ -72,7 +97,7 @@ pub async fn ensure_sheet_ready(
                 app_config.sheet_name
             );
 
-            generate_sheet(&hub, &app_config).await;
+            generate_sheet(&hub, &app_config, &app_config.sheet_name, Some(0)).await;
             let (_, sheet_id) = generate_template_grid(&hub, &app_config, &wib).await;
             auto_resize_dimension(&hub, &app_config, sheet_id).await;
 

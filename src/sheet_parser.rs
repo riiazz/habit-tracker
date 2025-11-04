@@ -201,3 +201,30 @@ pub fn print_activities(
         total_exp
     );
 }
+
+pub async fn get_sheet_id(
+    hub: &Sheets<HttpsConnector<HttpConnector>>,
+    app_config: &AppConfig,
+    sheet_name: &String,
+) -> i32 {
+    let (_, spreadsheet) = hub
+        .spreadsheets()
+        .get(&app_config.spreadsheet_id)
+        .doit()
+        .await
+        .unwrap();
+
+    let sheet_id = spreadsheet
+        .sheets
+        .as_ref()
+        .and_then(|sheets| {
+            sheets
+                .iter()
+                .filter_map(|sheet| sheet.properties.as_ref())
+                .find(|props| props.title.as_deref() == Some(sheet_name))
+                .and_then(|props| props.sheet_id)
+        })
+        .unwrap_or_else(|| panic!("Sheet id for {} not found!", sheet_name));
+
+    sheet_id
+}
