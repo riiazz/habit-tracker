@@ -9,8 +9,7 @@ use crate::{
     data_updater::{bulk_update, update_today_progress},
     init::{AppConfig, ensure_sheet_ready, load_app_config, setup_authenticator, valid_months},
     interaction::{get_user_input_exit_session, get_user_inputs},
-    sheet_parser::{get_today_progresses, print_activities},
-    template_builder::generate_config_sheet,
+    sheet_parser::{get_today_progresses, print_activities, print_current_month_total_progress},
 };
 use chrono::{Duration, Utc};
 use cliclack::select;
@@ -61,7 +60,8 @@ async fn main() {
         let mut action_selector = select("How would you like to start?");
         action_selector = action_selector.item(1, "✅ Record today's accomplishments", "");
         action_selector = action_selector.item(2, "🔍 Browse & improve previous entries", "");
-        action_selector = action_selector.item(3, "dev sandbox, generate config sheet", "");
+        action_selector =
+            action_selector.item(3, "dev sandbox, show total progress this month", "");
         action_selector = action_selector.item(4, "🌙 Rest for today (exit)", "");
 
         let selected_action = action_selector.interact().unwrap();
@@ -105,7 +105,7 @@ async fn main() {
                 }
             }
             3 => {
-                _ = generate_config_sheet(&hub, &app_config).await;
+                print_current_month_total_progress(&values);
             }
             4 => {
                 break 'main_loop;

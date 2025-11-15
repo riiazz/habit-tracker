@@ -228,3 +228,100 @@ pub async fn get_sheet_id(
 
     sheet_id
 }
+
+pub fn print_current_month_total_progress(values: &Vec<Vec<Value>>) {
+    let habits = get_habits(values, 0);
+    let dates = get_dates(values, 1);
+    let mut habit_score: HashMap<String, usize> = HashMap::new();
+
+    for (habit, row) in habits {
+        for (_, col) in &dates {
+            if values[row][*col] == "TRUE" {
+                *habit_score.entry(habit.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let openings = [
+        "Hero’s Monthly Report:",
+        "Your Adventure Log for this month:",
+        "Guild Ledger — Monthly Summary:",
+        "The Oracle reveals your progress:",
+        "Record of your deeds this month:",
+        "Your expedition results:",
+        "Monthly EXP Tally:",
+        "Brave adventurer, here are your gains:",
+        "Warrior, your training for this month is logged:",
+        "Chronicles of the month:",
+    ];
+
+    let bodies = [
+        "You have gained the following EXP:",
+        "These are the fruits of your discipline:",
+        "Your actions have yielded:",
+        "Your quests granted you:",
+        "Experience accumulated from your habits:",
+        "Behold your earned experience:",
+    ];
+
+    let total_message = [
+        "Your total experience this month amounts to {total_exp} EXP.",
+        "You have amassed a total of {total_exp} EXP from all habits.",
+        "All quests combined, your EXP reaches {total_exp}.",
+        "The guild tallies your monthly total: {total_exp} EXP.",
+        "Your combined training grants you {total_exp} EXP.",
+        "The Chronicle Keeper records a total of {total_exp} EXP.",
+        "The Oracle reveals your essence: {total_exp} EXP earned.",
+        "System report: Total accumulated EXP = {total_exp}.",
+        "Total EXP acquired this month: {total_exp}.",
+        "Your journey’s monthly sum stands at {total_exp} EXP.",
+        "By all your deeds, you have secured {total_exp} EXP.",
+        "The month concludes with {total_exp} EXP earned.",
+        "Computation complete. Total EXP: {total_exp}.",
+        "Your saga grows with this month's total of {total_exp} EXP.",
+        "Final tally: {total_exp} EXP gained.",
+        "Hero, your power this month totals {total_exp} EXP.",
+        "Record update: Total monthly EXP = {total_exp}.",
+        "Your efforts yield a combined {total_exp} EXP.",
+        "These results grant you {total_exp} EXP in total.",
+        "The grand total of your habit EXP is {total_exp}.",
+    ];
+
+    let closings = [
+        "Press onward, hero.",
+        "Your journey continues.",
+        "May next month be even stronger.",
+        "The guild is proud.",
+        "Your legend grows.",
+        "Stay steadfast, warrior.",
+        "Another month awaits.",
+        "Your path becomes clearer.",
+        "Victory is built day by day.",
+        "Return soon with new triumphs.",
+    ];
+
+    println!(
+        "\n{}\n{}\n",
+        random_element(&openings),
+        random_element(&bodies)
+    );
+
+    let mut sorted_habit: Vec<String> = habit_score.keys().cloned().collect();
+    sorted_habit.sort();
+
+    let mut total_exp = 0;
+    for habit in sorted_habit {
+        let score = habit_score.get(&habit).unwrap();
+        println!("{} : {} EXP", habit, score);
+        total_exp = total_exp + score;
+    }
+
+    let total_message = random_element(&total_message);
+    let total_message = total_message.replace("{total_exp}", &total_exp.to_string());
+
+    println!("\n{}\n{}\n", total_message, random_element(&closings));
+}
+
+fn random_element<'a>(list: &'a [&str]) -> &'a str {
+    list.choose(&mut rand::thread_rng()).unwrap()
+}
