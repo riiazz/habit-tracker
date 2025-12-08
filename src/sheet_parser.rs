@@ -14,13 +14,20 @@ pub fn get_active_habits(values: &Vec<Vec<Value>>, index: usize) -> HashMap<Stri
 
     let mut i = index;
     while i < values.len() {
-        if let Some(cell) = values[i].get(0).and_then(|c| c.as_str()) {
+        if let Some(cell) = values[i]
+            .get(config_table::Column::HabitName.as_usize_zero_based_index())
+            .and_then(|c| c.as_str())
+        {
             if cell.is_empty() {
                 break;
             }
 
-            let is_complete = values[i].get(1).and_then(|c| c.as_str());
-            let is_active = values[i].get(2).and_then(|c| c.as_str());
+            let is_complete = values[i]
+                .get(config_table::Column::IsComplete.as_usize_zero_based_index())
+                .and_then(|c| c.as_str());
+            let is_active = values[i]
+                .get(config_table::Column::IsActive.as_usize_zero_based_index())
+                .and_then(|c| c.as_str());
 
             let is_complete = is_complete.unwrap() == "TRUE";
             let is_active = is_active.unwrap() == "TRUE";
@@ -324,4 +331,25 @@ pub fn print_current_month_total_progress(values: &Vec<Vec<Value>>) {
 
 fn random_element<'a>(list: &'a [&str]) -> &'a str {
     list.choose(&mut rand::thread_rng()).unwrap()
+}
+
+pub mod config_table {
+    pub const START_ROW_INDEX: usize = 1;
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum Column {
+        HabitName = 1,
+        IsComplete = 2,
+        IsActive = 3,
+    }
+
+    impl Column {
+        pub fn as_usize(self) -> usize {
+            self as usize
+        }
+
+        pub fn as_usize_zero_based_index(self) -> usize {
+            self as usize - 1
+        }
+    }
 }
