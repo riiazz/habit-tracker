@@ -7,10 +7,11 @@ mod template_builder;
 
 use crate::{
     data_updater::{bulk_update, get_cell_address, set_data, update_today_progress},
+    helpers::{delete_rows, group_consecutive},
     init::{AppConfig, ensure_sheet_ready, load_app_config, setup_authenticator, valid_months},
     interaction::{get_user_input_exit_session, get_user_input_habit, get_user_inputs},
     sheet_parser::{
-        config_table, get_dates, get_habits, get_today_progresses, print_activities,
+        config_table, get_dates, get_habits, get_sheet_id, get_today_progresses, print_activities,
         print_current_month_total_progress,
     },
 };
@@ -19,7 +20,7 @@ use cliclack::select;
 use core::panic;
 use google_sheets4::{
     Sheets,
-    api::{BatchUpdateValuesRequest, ValueRange},
+    api::{BatchUpdateSpreadsheetRequest, BatchUpdateValuesRequest, Request, ValueRange},
 };
 use std::{collections::HashMap, usize};
 use yup_oauth2::{
@@ -148,6 +149,7 @@ async fn main() {
 
                 let update_value = update_value_selector.interact().unwrap();
 
+                let mut row_to_delete: Vec<String> = Vec::new();
                 if !update_value {
                     for (habit_name, is_update) in selected_habits.iter_mut() {
                         let cur_month_index = match current_month_habits.get(habit_name) {
@@ -155,8 +157,11 @@ async fn main() {
                             None => continue,
                         };
 
+                        let mut deletable = true;
+
                         for (_, date_index) in &current_month_dates {
                             if values[*cur_month_index][*date_index] == "TRUE" {
+                                deletable = false;
                                 *is_update = false;
                                 println!(
                                     "{} has activity history. Deactivation is not allowed.",
@@ -164,6 +169,10 @@ async fn main() {
                                 );
                                 break;
                             }
+                        }
+
+                        if deletable {
+                            row_to_delete.push(habit_name.to_string());
                         }
                     }
                 }
@@ -209,6 +218,61 @@ async fn main() {
                     }
                     Err(err) => {
                         eprint!("Update failed: {:?}", err);
+                    }
+                }
+
+                if !row_to_delete.is_empty() {
+                    let delete_msg = format!(
+                        "\nSuccessfully deleted: \n  {}\n",
+                        row_to_delete.join("\n  ")
+                    );
+
+                    let mut habit_to_delete_index: Vec<usize> = row_to_delete
+                        .iter()
+                        .filter_map(|name| current_month_habits.get(name).copied())
+                        .collect();
+
+                    habit_to_delete_index.sort();
+
+                    let sheet_id = get_sheet_id(&hub, &app_config, &app_config.sheet_name).await;
+
+                    let habit_to_delete_index_group = group_consecutive(&habit_to_delete_index);
+                    let mut delete_row_requests: Vec<Request> = Vec::new();
+
+                    let mut previous_group_deleted_row: i32 = 0;
+                    for group in habit_to_delete_index_group {
+                        let min_index = (group.iter().min().unwrap().clone() as i32)
+                            - previous_group_deleted_row;
+                        let max_index = (group.iter().max().unwrap().clone() as i32) + 1
+                            - previous_group_deleted_row;
+
+                        let delete_request =
+                            delete_rows(sheet_id, "ROWS".to_string(), min_index, max_index);
+                        delete_row_requests.push(delete_request);
+                        previous_group_deleted_row =
+                            previous_group_deleted_row + (max_index - min_index);
+                    }
+
+                    let update_batch = BatchUpdateSpreadsheetRequest {
+                        requests: Some(delete_row_requests),
+                        include_spreadsheet_in_response: None,
+                        response_include_grid_data: None,
+                        response_ranges: None,
+                    };
+
+                    let result = hub
+                        .spreadsheets()
+                        .batch_update(update_batch, &app_config.spreadsheet_id)
+                        .doit()
+                        .await;
+
+                    match result {
+                        Ok(_) => {
+                            println!("{delete_msg}");
+                        }
+                        Err(err) => {
+                            eprint!("Update failed: {:?}", err);
+                        }
                     }
                 }
             }

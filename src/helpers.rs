@@ -2,8 +2,8 @@ use google_sheets4::{
     FieldMask,
     api::{
         AddSheetRequest, AutoResizeDimensionsRequest, BooleanCondition, CellData, CellFormat,
-        Color, DataValidationRule, DimensionRange, GridProperties, GridRange,
-        InsertDimensionRequest, RepeatCellRequest, Request, SetDataValidationRequest,
+        Color, DataValidationRule, DeleteDimensionRequest, DimensionRange, GridProperties,
+        GridRange, InsertDimensionRequest, RepeatCellRequest, Request, SetDataValidationRequest,
         SheetProperties, TextFormat,
     },
 };
@@ -670,4 +670,107 @@ pub fn auto_resize_dimension_request(
         cancel_data_source_refresh: None,
         add_slicer: None,
     }
+}
+
+pub fn delete_rows(sheet_id: i32, dimension: String, start_index: i32, end_index: i32) -> Request {
+    Request {
+        delete_dimension: Some(DeleteDimensionRequest {
+            range: Some(DimensionRange {
+                dimension: Some(dimension),
+                end_index: Some(end_index),
+                sheet_id: Some(sheet_id),
+                start_index: Some(start_index),
+            }),
+        }),
+
+        // Everything else left uninitialized (non-recursive)
+        auto_resize_dimensions: None,
+        add_banding: None,
+        add_chart: None,
+        add_conditional_format_rule: None,
+        add_data_source: None,
+        add_dimension_group: None,
+        add_filter_view: None,
+        add_named_range: None,
+        add_protected_range: None,
+        append_cells: None,
+        append_dimension: None,
+        auto_fill: None,
+        add_sheet: None,
+        clear_basic_filter: None,
+        copy_paste: None,
+        create_developer_metadata: None,
+        cut_paste: None,
+        delete_banding: None,
+        delete_conditional_format_rule: None,
+        delete_data_source: None,
+        delete_developer_metadata: None,
+        delete_dimension_group: None,
+        delete_duplicates: None,
+        delete_embedded_object: None,
+        delete_filter_view: None,
+        delete_named_range: None,
+        delete_protected_range: None,
+        delete_range: None,
+        delete_sheet: None,
+        duplicate_filter_view: None,
+        duplicate_sheet: None,
+        find_replace: None,
+        insert_dimension: None,
+        insert_range: None,
+        merge_cells: None,
+        move_dimension: None,
+        paste_data: None,
+        randomize_range: None,
+        refresh_data_source: None,
+        repeat_cell: None,
+        set_basic_filter: None,
+        set_data_validation: None,
+        sort_range: None,
+        text_to_columns: None,
+        trim_whitespace: None,
+        unmerge_cells: None,
+        update_banding: None,
+        update_borders: None,
+        update_cells: None,
+        update_chart_spec: None,
+        update_conditional_format_rule: None,
+        update_data_source: None,
+        update_developer_metadata: None,
+        update_dimension_group: None,
+        update_dimension_properties: None,
+        update_embedded_object_border: None,
+        update_embedded_object_position: None,
+        update_filter_view: None,
+        update_named_range: None,
+        update_protected_range: None,
+        update_sheet_properties: None,
+        update_slicer_spec: None,
+        update_spreadsheet_properties: None,
+        cancel_data_source_refresh: None,
+        add_slicer: None,
+    }
+}
+
+pub fn group_consecutive(values: &[usize]) -> Vec<Vec<usize>> {
+    if values.is_empty() {
+        return vec![];
+    }
+
+    let mut groups = vec![vec![values[0]]];
+
+    for &v in &values[1..] {
+        let last_group = groups.last_mut().unwrap();
+        let last_value = *last_group.last().unwrap();
+
+        if v == last_value + 1 {
+            // continue the group
+            last_group.push(v);
+        } else {
+            // start a new group
+            groups.push(vec![v]);
+        }
+    }
+
+    groups
 }
